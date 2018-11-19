@@ -15,17 +15,13 @@
 package config
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
-	"net/http"
-	"os"
-	"strconv"
-	"strings"
-
+	"github.com/coreos/go-oidc"
 	"github.com/goharbor/harbor/src/adminserver/client"
 	"github.com/goharbor/harbor/src/common"
 	comcfg "github.com/goharbor/harbor/src/common/config"
@@ -37,6 +33,13 @@ import (
 	"github.com/goharbor/harbor/src/core/promgr/pmsdriver"
 	"github.com/goharbor/harbor/src/core/promgr/pmsdriver/admiral"
 	"github.com/goharbor/harbor/src/core/promgr/pmsdriver/local"
+	"io/ioutil"
+	"net"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"time"
 )
 
 const (
@@ -59,6 +62,8 @@ var (
 	AdmiralClient *http.Client
 	// TokenReader is used in integration mode to read token
 	TokenReader admiral.TokenReader
+	Verifier    *oidc.IDTokenVerifier
+	Provider    *oidc.Provider
 	// defined as a var for testing.
 	defaultCACertPath = "/etc/core/ca/ca.crt"
 )
@@ -95,7 +100,10 @@ func InitByURL(adminServerURL string) error {
 
 	// init secret store
 	initSecretStore()
-
+	if err := initOIDCProvider(); err != nil {
+		log.Errorf("Failed to initialise OIDC provider, error: %v", err)
+		return err
+	}
 	// init project manager based on deploy mode
 	if err := initProjectManager(); err != nil {
 		log.Errorf("Failed to initialise project manager, error: %v", err)
@@ -103,6 +111,76 @@ func InitByURL(adminServerURL string) error {
 	}
 
 	return nil
+}
+
+func initOIDCProvider() error {
+	GetSystemCfg()
+	oidcConfig, err := OIDCConfig()
+	if err != nil {
+		log.Warning("failed to get oidc config, ", err)
+		return err
+	}
+
+	OIDCClient, err := httpClientForRootCAs(oidcConfig.RootCAs, oidcConfig.Insecure)
+	if err != nil {
+		log.Warning("failed to new OIDC client, ", err)
+		return err
+	}
+	ctx := oidc.ClientContext(context.Background(), OIDCClient)
+	provider, err := oidc.NewProvider(ctx, oidcConfig.IssuerURL)
+	if err != nil {
+		log.Warning("failed to query provider, ", err)
+		return err
+	}
+
+	Provider = provider
+	Verifier = provider.Verifier(&oidc.Config{ClientID: oidcConfig.ClientID})
+
+	log.Info("init OIDC provider success.")
+
+	return nil
+}
+
+// return an HTTP client which trusts the provided root CAs.
+func httpClientForRootCAs(rootCAs string, insecure bool) (*http.Client, error) {
+	tlsConfig := tls.Config{RootCAs: x509.NewCertPool()}
+	rootCABytes, err := ioutil.ReadFile(rootCAs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read root-ca: %v", err)
+	}
+	if !tlsConfig.RootCAs.AppendCertsFromPEM(rootCABytes) {
+		return nil, fmt.Errorf("no certs found in root CA file %q", rootCAs)
+	}
+
+	tlsConfig.InsecureSkipVerify = insecure
+
+	return &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tlsConfig,
+			Proxy:           http.ProxyFromEnvironment,
+			DialContext: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		},
+	}, nil
+}
+
+func OIDCConfig() (*models.OIDCConfig, error) {
+	cfg, err := mg.Get()
+	if err != nil {
+		return nil, err
+	}
+	oidcConf := &models.OIDCConfig{}
+	oidcConf.ClientID = cfg[common.OIDCClientID].(string)
+	oidcConf.ClientSecret = cfg[common.OIDCClientSecret].(string)
+	oidcConf.IssuerURL = cfg[common.OIDCIssuerURL].(string)
+	oidcConf.RootCAs = cfg[common.OIDCRootCAs].(string)
+	oidcConf.Insecure = cfg[common.OIDCInsecure].(bool)
+
+	return oidcConf, nil
 }
 
 func initKeyProvider() {

@@ -49,6 +49,7 @@ var (
 		common.EmailInsecure:    true,
 		common.LDAPVerifyCert:   true,
 		common.UAAVerifyCert:    true,
+		common.OIDCInsecure:	 true,
 		common.ReadOnly:         true,
 		common.WithChartMuseum:  true,
 	}

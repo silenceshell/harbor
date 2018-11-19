@@ -214,6 +214,12 @@ uaa_clientsecret = rcp.get("configuration", "uaa_clientsecret")
 uaa_verify_cert = rcp.get("configuration", "uaa_verify_cert")
 uaa_ca_cert = rcp.get("configuration", "uaa_ca_cert")
 
+oidc_client_id = rcp.get("configuration", "oidc_client_id")
+oidc_client_secret  = rcp.get("configuration", "oidc_client_secret")
+oidc_insecure = rcp.get("configuration", "oidc_insecure")
+oidc_root_ca = rcp.get("configuration", "oidc_root_ca")
+oidc_issuer_url = rcp.get("configuration", "oidc_issuer_url")
+
 secret_key = get_secret_key(secretkey_path)
 log_rotate_count = rcp.get("configuration", "log_rotate_count")
 log_rotate_size = rcp.get("configuration", "log_rotate_size")
@@ -376,7 +382,12 @@ render(os.path.join(templates_dir, "adminserver", "env"),
         skip_reload_env_pattern=skip_reload_env_pattern,
         chart_repository_url=chart_repository_url,
         registry_controller_url = registry_controller_url,
-        with_chartmuseum=args.chart_mode
+        with_chartmuseum=args.chart_mode,
+        oidc_client_id = oidc_client_id,
+        oidc_client_secret = oidc_client_secret,
+        oidc_insecure = oidc_insecure,
+        oidc_root_ca = oidc_root_ca,
+        oidc_issuer_url = oidc_issuer_url
 	)
 
 # set cache for chart repo server
@@ -470,6 +481,14 @@ if auth_mode == "uaa_auth":
     else:
         print("Can not find UAA CA cert: %s, skip" % uaa_ca_cert)
 
+if os.path.isfile(oidc_root_ca):
+    if not os.path.isdir(ui_cert_dir):
+        os.makedirs(ui_cert_dir, mode=0o600)
+    ui_oidc_ca = os.path.join(ui_cert_dir, "dex.crt")
+    print("Copying OIDC CA cert to %s" % ui_oidc_ca)
+    shutil.copyfile(oidc_root_ca, ui_oidc_ca)
+else:
+    print("Can not find OIDC CA cert: %s, skip" % oidc_root_ca)
 
 def validate_crt_subj(dirty_subj):
     subj_list = [item for item in dirty_subj.strip().split("/") \

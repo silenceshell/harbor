@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
-
 	beegoctx "github.com/astaxie/beego/context"
 	"github.com/docker/distribution/reference"
 	"github.com/goharbor/harbor/src/common/models"
@@ -34,6 +33,7 @@ import (
 	"github.com/goharbor/harbor/src/core/config"
 	"github.com/goharbor/harbor/src/core/promgr"
 	"github.com/goharbor/harbor/src/core/promgr/pmsdriver/admiral"
+	"strings"
 )
 
 // ContextValueKey for content value
@@ -97,6 +97,7 @@ func Init() {
 		&secretReqCtxModifier{config.SecretStore},
 		&basicAuthReqCtxModifier{},
 		&sessionReqCtxModifier{},
+		&oidcTokenReqCtxModifier{},
 		&unauthorizedReqCtxModifier{}}
 }
 
@@ -247,6 +248,78 @@ func (s *sessionReqCtxModifier) Modify(ctx *beegoctx.Context) bool {
 	securCtx := local.NewSecurityContext(&user, pm)
 
 	setSecurCtxAndPM(ctx.Request, securCtx, pm)
+
+	return true
+}
+
+type oidcTokenReqCtxModifier struct{}
+
+//getBearerToken tries to get Bearer token from request header.
+//It will return empty string if the reqeust is nil.
+func getBearerToken(req *http.Request) string {
+	const HeaderPrefix = "Bearer "
+	log.Info("get bearer token ")
+
+	if req == nil {
+		log.Info("req is nil ")
+		return ""
+	}
+	authorization := req.Header.Get("Authorization")
+	if authorization == "" {
+		log.Info("authorization is empty")
+		return ""
+	}
+	log.Info("authn, ", authorization)
+	if strings.HasPrefix(authorization, HeaderPrefix) {
+		return strings.TrimPrefix(authorization, HeaderPrefix)
+	}
+	return ""
+}
+
+type Claims struct {
+	Name          string `json:"name"`
+	ISS           string `json:"iss"`
+	Sub           string `json:"sub"`
+	Aud           string `json:"aud"`
+	Exp           int    `json:"exp"`
+	Iat           int    `json:"iat"`
+	At_hash       string `json:"at_hash"`
+	Email         string `json:"email"`
+	EmailVerified bool   `json:"email_verified"`
+}
+
+func (t *oidcTokenReqCtxModifier) Modify(ctx *beegoctx.Context) bool {
+	token := getBearerToken(ctx.Request)
+	if len(token) == 0 {
+		log.Info("get token failed")
+		return false
+	}
+
+	log.Debug("got Bearer token from request")
+
+	idToken, err := config.Verifier.Verify(ctx.Request.Context(), token)
+	if err != nil {
+		log.Info("token verify failed, ", token, err)
+		return false
+	}
+
+	var claims Claims
+	//var claims json.RawMessage
+	err = idToken.Claims(&claims)
+	if err != nil {
+		log.Info("token claim failed, ", err)
+		return false
+	}
+
+	user := &models.User{
+		Username: claims.Name,
+	}
+	log.Debug("using local database project manager")
+	pm := config.GlobalProjectMgr
+	log.Debug("creating local database security context with oidc...")
+	secureCtx := local.NewSecurityContext(user, pm)
+
+	setSecurCtxAndPM(ctx.Request, secureCtx, pm)
 
 	return true
 }

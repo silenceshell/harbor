@@ -92,6 +92,8 @@ services:
     container_name: harbor-core
     env_file:
       - ./common/config/core/env
+    extra_hosts:
+      - "dex.example.com:1.1.1.1"
     restart: always
     volumes:
       - ./common/config/core/app.conf:/etc/core/app.conf:z

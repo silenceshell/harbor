@@ -71,6 +71,7 @@ var adminServerDefaultConfig = map[string]interface{}{
 	common.UAAClientSecret:            "testsecret",
 	common.UAAEndpoint:                "10.192.168.5",
 	common.UAAVerifyCert:              false,
+	common.OIDCInsecure:               false,
 	common.CoreURL:                    "http://myui:8888/",
 	common.JobServiceURL:              "http://myjob:8888/",
 	common.ReadOnly:                   false,
